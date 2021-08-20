@@ -1,9 +1,11 @@
 from typing import Tuple, Optional, Union
+from torchvision.models import resnet18
 
 from mlagents.trainers.torch.layers import linear_layer, Initialization, Swish
 
 from mlagents.torch_utils import torch, nn
 from mlagents.trainers.torch.model_serialization import exporting_to_onnx
+from mlagents_envs import logging_util
 
 
 class Normalizer(nn.Module):
@@ -272,3 +274,27 @@ class ResNetVisualEncoder(nn.Module):
         hidden = self.sequential(visual_obs)
         before_out = hidden.reshape(batch_size, -1)
         return torch.relu(self.dense(before_out))
+
+
+class PretrainedResNetVisualEncoder(nn.Module):
+    def __init__(
+        self, height: int, width: int, initial_channels: int, output_size: int
+    ):
+        super().__init__()
+        self.encoder = resnet18(pretrained=True)
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+        self.encoder.fc = linear_layer(
+            self.encoder.fc.in_features,
+            output_size,
+            kernel_init=Initialization.KaimingHeNormal,
+            kernel_gain=1.41,  # Use ReLU gain
+        )
+        self.encoder.eval()
+
+    def forward(self, visual_obs: torch.Tensor) -> torch.Tensor:
+        if not exporting_to_onnx.is_exporting():
+            visual_obs = visual_obs.permute([0, 3, 1, 2])
+        before_out = self.encoder(visual_obs)
+        return torch.relu(before_out)
