@@ -282,19 +282,24 @@ class PretrainedResNetVisualEncoder(nn.Module):
     ):
         super().__init__()
         self.encoder = resnet18(pretrained=True)
+        in_features = self.encoder.fc.in_features
+        self.encoder.fc = torch.nn.Identity()
         for param in self.encoder.parameters():
             param.requires_grad = False
 
-        self.encoder.fc = linear_layer(
-            self.encoder.fc.in_features,
+        self.dense = linear_layer(
+            in_features,
             output_size,
             kernel_init=Initialization.KaimingHeNormal,
             kernel_gain=1.41,  # Use ReLU gain
         )
-        self.encoder.eval()
 
     def forward(self, visual_obs: torch.Tensor) -> torch.Tensor:
         if not exporting_to_onnx.is_exporting():
             visual_obs = visual_obs.permute([0, 3, 1, 2])
-        before_out = self.encoder(visual_obs)
-        return torch.relu(before_out)
+        self.encoder.eval()
+        batch_size = visual_obs.shape[0]
+        with torch.no_grad():
+            hidden = self.encoder(visual_obs)
+        before_out = hidden.reshape(batch_size, -1)
+        return torch.relu(self.dense(before_out))
